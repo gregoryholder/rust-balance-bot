@@ -1,0 +1,46 @@
+[package]
+name = "rust-balance-bot"
+version = "0.1.0"
+authors = ["Gregory Holder <gregory.holder76@gmail.com>"]
+edition = "2021"
+
+
+[[bin]]
+name = "rust-balance-bot"
+test = false
+bench = false
+
+[dependencies]
+panic-serial = { version = "0.1.1", features = ["full"] }
+ufmt = "0.2.0"
+nb = "1.1.0"
+mpu6050 = "0.1.6"
+ufmt_float = "0.2.0"
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+avr-device = "0.5.4"
+arrayvec = {version = "0.7.4", default-features = false}
+rand = {version = "0.8.5", default-features = false, features = ["small_rng"]}
+panic-halt = "0.2.0"
+
+# [dependencies.embedded-hal-v0]
+# version = "0.2.3"
+# package = "embedded-hal"
+
+[dependencies.arduino-hal]
+git = "https://github.com/rahix/avr-hal"
+rev = "eb818ae4bb256a2a632a81eb4f3fb0aa89d6a06e"
+features = ["arduino-mega2560"]
+
+# Configure the build for minimal size - AVRs have very little program memory
+[profile.dev]
+panic = "abort"
+lto = true
+opt-level = "s"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+debug = true
+lto = true
+opt-level = "s"
