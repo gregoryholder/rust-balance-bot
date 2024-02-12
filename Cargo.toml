@@ -15,13 +15,14 @@ panic-serial = { version = "0.1.1", features = ["full"] }
 ufmt = "0.2.0"
 nb = "1.1.0"
 mpu6050 = "0.1.6"
-ufmt_float = "0.2.0"
+ufmt_float = { git = "https://github.com/tl8roy/ufmt_float", rev = "d99c9b183792c4a2736387394f54f693ce17de76" }
 embedded-hal = "1.0"
 embedded-hal-async = "1.0"
 avr-device = "0.5.4"
-arrayvec = {version = "0.7.4", default-features = false}
-rand = {version = "0.8.5", default-features = false, features = ["small_rng"]}
+arrayvec = { version = "0.7.4", default-features = false }
+rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 panic-halt = "0.2.0"
+
 
 # [dependencies.embedded-hal-v0]
 # version = "0.2.3"

@@ -6,7 +6,7 @@ mod serial;
 mod stepper;
 mod timer;
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 
 use arduino_hal::delay_ms;
 use arduino_hal::hal::port::Dynamic;
@@ -14,33 +14,44 @@ use arduino_hal::hal::port::Dynamic;
 use arduino_hal::port::{mode::Output, Pin};
 use avr_device::atmega2560::TC1;
 use avr_device::interrupt::Mutex;
-use stepper::{RefStepperControl, Stepper};
+use mpu6050::Mpu6050;
+use serial::Usart;
+use stepper::{RefStepperControl, Stepper, StepperMutexControl};
 
 #[allow(unused_imports)]
 use arduino_hal::prelude::*;
 use panic_halt as _;
 
-use timer::millis_init;
+use timer::{millis, millis_init};
 
 type OutPin = Pin<Output, Dynamic>;
+type StepperType = Stepper<OutPin, OutPin, OutPin>;
 
-static LEFT_STEPPER: Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>>> =
-    Mutex::new(RefCell::new(None));
+static LEFT_STEPPER: StepperMutexControl<StepperType> = StepperMutexControl::new_empty();
 
-static RIGHT_STEPPER: Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>>> =
-    Mutex::new(RefCell::new(None));
+static RIGHT_STEPPER: StepperMutexControl<StepperType> = StepperMutexControl::new_empty();
 
 const STEPPER_ISR_INTERVAL_US: u64 = 300;
-
-// static mut SERIAL: Option<Usart> = None;
 
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
 
-    let serial = arduino_hal::default_serial!(dp, pins, 57600);
-    serial::init(serial);
+    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+    // serial::init(serial);
+
+    let i2c = arduino_hal::I2c::new(
+        dp.TWI,
+        pins.d20.into_pull_up_input(),
+        pins.d21.into_pull_up_input(),
+        50000,
+    );
+    let mut imu = Mpu6050::new(i2c);
+
+    let mut delay = arduino_hal::Delay::new();
+
+    let _ = imu.init(&mut delay);
 
     let tc0 = dp.TC0;
     let tc1 = dp.TC1;
@@ -56,9 +67,7 @@ fn main() -> ! {
 
     let left = Stepper::new(left_en_pin, left_dir_pin, left_step_pin);
 
-    avr_device::interrupt::free(|cs| {
-        LEFT_STEPPER.borrow(cs).replace(Some(left));
-    });
+    LEFT_STEPPER.assign(left);
 
     let right_step_pin = pins.d40.into_output().downgrade();
     let right_dir_pin = pins.d41.into_output().downgrade();
@@ -66,18 +75,71 @@ fn main() -> ! {
 
     let right = Stepper::new(right_en_pin, right_dir_pin, right_step_pin);
 
-    avr_device::interrupt::free(|cs| {
-        RIGHT_STEPPER.borrow(cs).replace(Some(right));
-    });
+    RIGHT_STEPPER.assign(right);
 
-    LEFT_STEPPER.set_acceleration(4000);
+    LEFT_STEPPER.set_acceleration(8000);
     LEFT_STEPPER.set_enable(true);
 
-    RIGHT_STEPPER.set_acceleration(4000);
+    RIGHT_STEPPER.set_acceleration(8000);
     RIGHT_STEPPER.set_enable(true);
 
     unsafe { avr_device::interrupt::enable() };
 
+    let mut now = 0;
+
+    const GYRO_PERIOD: u32 = 20;
+
+    loop {
+        // let acc = gyro.get_acc_angles();
+        let gyro = imu.get_gyro().unwrap();
+
+        // let x = (gyro.x * 1000.0) as i32;
+        // let y = (gyro.y * 1000.0) as i32;
+        // let z = (gyro.z * 1000.0) as i32;
+
+        // let x_gyro = uFmt_f32::Two(gyro.x);
+        // let y_gyro = uFmt_f32::Two(gyro.y);
+        // let z_gyro = uFmt_f32::Two(gyro.z);
+
+        // println!("{}ms\t| x: \t{}, y: \t{}, z: \t{}", now, x_gyro, y_gyro, z_gyro);
+
+        // println!("{}, {}, {}"x_gyro, x_gyro, y_gyro, z_gyro);
+
+        // ufmt::uWrite(&mut serial::GLOBAL_SERIAL.borrow_mut(), "x: ").unwrap();
+
+        // write raw floats bytes to serial
+
+        write_float(&mut serial, gyro.x);
+        // write_float(&mut serial, gyro.y);
+        // write_float(&mut serial, gyro.z);
+
+        ufmt::uwrite!(serial, "\n").unwrap();
+
+        // let z = acc.z;
+
+        // let x = uFmt_f32::Two(x);
+        // let y = uFmt_f32::Two(y);
+
+        // println!("{} {}", x, y);
+
+        // scale and convert to ints
+        // let x = (x * 2000.0) as i32;
+        // let y = (y * 2000.0) as i32;
+        // let z = (z * 100.0) as i32;
+
+        // print the values
+        // println!("x: {}, y: {}", x, y);
+
+        // LEFT_STEPPER.set_speed(x);
+        // RIGHT_STEPPER.set_speed(y);
+
+        while millis() - now < GYRO_PERIOD {
+            delay_ms(1);
+        }
+        now += GYRO_PERIOD;
+    }
+
+    #[allow(unreachable_code)]
     loop {
         LEFT_STEPPER.set_speed(1000);
         RIGHT_STEPPER.set_speed(1500);
@@ -105,6 +167,13 @@ fn main() -> ! {
 
         LEFT_STEPPER.set_enable(true);
         RIGHT_STEPPER.set_enable(true);
+    }
+}
+
+fn write_float(serial: &mut Usart, f: f32) {
+    let bytes = f.to_le_bytes();
+    for byte in bytes.iter() {
+        serial.write_byte(*byte);
     }
 }
 

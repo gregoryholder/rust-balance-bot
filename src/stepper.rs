@@ -6,8 +6,6 @@ use arduino_hal::delay_us;
 use avr_device::interrupt::Mutex;
 use embedded_hal::digital::OutputPin;
 
-use crate::OutPin;
-
 pub struct Stepper<E, D, S> {
     enable_pin: E,
     direction_pin: D,
@@ -25,8 +23,71 @@ pub struct Stepper<E, D, S> {
     enabled: bool,
 
     last_step_time_us: Option<u64>,
-    step_interval_us: u64,
     last_speed_update_us: Option<u64>,
+}
+
+trait StepperControl {
+    fn set_enable(&mut self, enable: bool);
+    fn set_speed(&mut self, speed: i32);
+    fn set_acceleration(&mut self, acc: u32);
+    fn run(&mut self, now: u64);
+}
+
+impl<E, D, S> StepperControl for Stepper<E, D, S>
+where
+    E: OutputPin,
+    D: OutputPin,
+    S: OutputPin,
+{
+    fn set_acceleration(&mut self, acc: u32) {
+        self.target_acceleration = acc;
+    }
+
+    fn set_speed(&mut self, speed: i32) {
+        self.target_speed = speed as i64 * 1_000_000;
+    }
+
+    fn run(&mut self, now: u64) {
+        if !self.enabled {
+            return;
+        }
+
+        let Some(last_step_time_us) = self.last_step_time_us else {
+            self.last_step_time_us = Some(now);
+            return;
+        };
+
+        let delta_us = now - last_step_time_us;
+
+        // TODO: update speed as variable assignment instead of method call
+        self.update_speed(now);
+
+        if self.current_speed == 0 {
+            self.last_step_time_us = Some(now);
+            return;
+        }
+
+        let step_interval_us = 1_000_000_000_000 / self.current_speed.abs() as u64;
+
+        if step_interval_us < delta_us {
+            self.step();
+
+            self.last_step_time_us = Some(last_step_time_us + step_interval_us);
+        }
+
+        return;
+    }
+
+    fn set_enable(&mut self, enable: bool) {
+        self.enable_pin.set_state((!enable).into()).unwrap();
+        self.enabled = enable;
+
+        if !enable {
+            self.current_speed = 0;
+            self.last_step_time_us = None;
+            self.last_speed_update_us = None;
+        }
+    }
 }
 
 impl<E, D, S> Stepper<E, D, S>
@@ -47,17 +108,8 @@ where
 
             current_speed: 0,
             last_step_time_us: None,
-            step_interval_us: 0,
             last_speed_update_us: None,
         }
-    }
-
-    pub fn set_acceleration(&mut self, acc: u32) {
-        self.target_acceleration = acc;
-    }
-
-    pub fn set_speed(&mut self, speed: i32) {
-        self.target_speed = speed as i64 * 1_000_000;
     }
 
     fn step(&mut self) {
@@ -91,48 +143,6 @@ where
             .set_state((self.current_speed > 0).into())
             .unwrap();
     }
-
-    pub fn run(&mut self, now: u64) {
-        if !self.enabled {
-            return;
-        }
-
-        let Some(last_step_time_us) = self.last_step_time_us else {
-            self.last_step_time_us = Some(now);
-            return;
-        };
-
-        let delta_us = now - last_step_time_us;
-
-        // TODO: update speed as variable assignment instead of method call
-        self.update_speed(now);
-
-        if self.current_speed == 0 {
-            self.last_step_time_us = Some(now);
-            return;
-        }
-
-        let step_interval_us = 1_000_000_000_000 / self.current_speed.abs() as u64;
-
-        if step_interval_us < delta_us {
-            self.step();
-
-            self.last_step_time_us = Some(last_step_time_us + step_interval_us);
-        }
-
-        return;
-    }
-
-    pub fn set_enable(&mut self, enable: bool) {
-        self.enable_pin.set_state((!enable).into()).unwrap();
-        self.enabled = enable;
-
-        if !enable {
-            self.current_speed = 0;
-            self.last_step_time_us = None;
-            self.last_speed_update_us = None;
-        }
-    }
 }
 
 fn calculate_new_speed(
@@ -164,11 +174,28 @@ pub trait RefStepperControl {
     fn run(&self, now: u64);
 }
 
+pub struct StepperMutexControl<T>(Mutex<RefCell<Option<T>>>);
+
 // implement stepper control for global mutex of stepper
-impl RefStepperControl for Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>>> {
+impl<S> StepperMutexControl<S> {
+    pub const fn new_empty() -> Self {
+        StepperMutexControl(Mutex::new(RefCell::new(None)))
+    }
+
+    pub fn assign(&self, stepper: S) {
+        avr_device::interrupt::free(|cs| {
+            self.0.borrow(cs).replace(Some(stepper));
+        });
+    }
+}
+
+impl<S> RefStepperControl for StepperMutexControl<S>
+where
+    S: StepperControl,
+{
     fn set_enable(&self, enable: bool) {
         avr_device::interrupt::free(|cs| {
-            if let Some(stepper) = self.borrow(cs).borrow_mut().as_mut() {
+            if let Some(stepper) = self.0.borrow(cs).borrow_mut().as_mut() {
                 stepper.set_enable(enable);
             }
         });
@@ -176,7 +203,7 @@ impl RefStepperControl for Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>
 
     fn set_speed(&self, speed: i32) {
         avr_device::interrupt::free(|cs| {
-            if let Some(stepper) = self.borrow(cs).borrow_mut().as_mut() {
+            if let Some(stepper) = self.0.borrow(cs).borrow_mut().as_mut() {
                 stepper.set_speed(speed);
             }
         });
@@ -184,7 +211,7 @@ impl RefStepperControl for Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>
 
     fn set_acceleration(&self, acc: u32) {
         avr_device::interrupt::free(|cs| {
-            if let Some(stepper) = self.borrow(cs).borrow_mut().as_mut() {
+            if let Some(stepper) = self.0.borrow(cs).borrow_mut().as_mut() {
                 stepper.set_acceleration(acc);
             }
         });
@@ -192,7 +219,7 @@ impl RefStepperControl for Mutex<RefCell<Option<Stepper<OutPin, OutPin, OutPin>>
 
     fn run(&self, now: u64) {
         avr_device::interrupt::free(|cs| {
-            if let Some(stepper) = self.borrow(cs).borrow_mut().as_mut() {
+            if let Some(stepper) = self.0.borrow(cs).borrow_mut().as_mut() {
                 stepper.run(now);
             }
         });
