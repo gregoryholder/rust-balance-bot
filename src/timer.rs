@@ -53,7 +53,7 @@ pub fn millis_init(tc0: arduino_hal::pac::TC0) {
     });
 }
 
-#[avr_device::interrupt(atmega2560)]
+#[avr_device::interrupt(atmega328p)]
 fn TIMER0_COMPA() {
     let cs = unsafe {CriticalSection::new()};
 

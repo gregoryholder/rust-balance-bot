@@ -31,7 +31,7 @@ panic-halt = "0.2.0"
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"
 rev = "eb818ae4bb256a2a632a81eb4f3fb0aa89d6a06e"
-features = ["arduino-mega2560"]
+features = ["arduino-nano"]
 
 # Configure the build for minimal size - AVRs have very little program memory
 [profile.dev]

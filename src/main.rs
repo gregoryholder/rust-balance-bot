@@ -12,7 +12,7 @@ use arduino_hal::delay_ms;
 use arduino_hal::hal::port::Dynamic;
 
 use arduino_hal::port::{mode::Output, Pin};
-use avr_device::atmega2560::TC1;
+use avr_device::atmega328p::TC1;
 use avr_device::interrupt::Mutex;
 use mpu6050::Mpu6050;
 use serial::Usart;
@@ -43,8 +43,8 @@ fn main() -> ! {
 
     let i2c = arduino_hal::I2c::new(
         dp.TWI,
-        pins.d20.into_pull_up_input(),
-        pins.d21.into_pull_up_input(),
+        pins.a4.into_pull_up_input(),
+        pins.a5.into_pull_up_input(),
         50000,
     );
     let mut imu = Mpu6050::new(i2c);
@@ -61,17 +61,17 @@ fn main() -> ! {
 
     // Enable interrupts globally
 
-    let left_step_pin = pins.d30.into_output().downgrade();
-    let left_dir_pin = pins.d31.into_output().downgrade();
-    let left_en_pin = pins.d32.into_output().downgrade();
+    let left_dir_pin = pins.d2.into_output().downgrade();
+    let left_step_pin = pins.d3.into_output().downgrade();
+    let left_en_pin = pins.d4.into_output().downgrade();
 
     let left = Stepper::new(left_en_pin, left_dir_pin, left_step_pin);
 
     LEFT_STEPPER.assign(left);
 
-    let right_step_pin = pins.d40.into_output().downgrade();
-    let right_dir_pin = pins.d41.into_output().downgrade();
-    let right_en_pin = pins.d42.into_output().downgrade();
+    let right_dir_pin = pins.d5.into_output().downgrade();
+    let right_step_pin = pins.d6.into_output().downgrade();
+    let right_en_pin = pins.d7.into_output().downgrade();
 
     let right = Stepper::new(right_en_pin, right_dir_pin, right_step_pin);
 
@@ -199,7 +199,7 @@ fn stepper_isr_init(mut tc1: TC1) {
 
 static STEPPER_NOW: Mutex<Cell<u64>> = Mutex::new(Cell::new(0));
 
-#[avr_device::interrupt(atmega2560)]
+#[avr_device::interrupt(atmega328p)]
 fn TIMER1_COMPA() {
     let cs = unsafe { avr_device::interrupt::CriticalSection::new() };
 
