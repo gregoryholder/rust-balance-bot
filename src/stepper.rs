@@ -3,7 +3,7 @@
 use core::cell::RefCell;
 
 use arduino_hal::delay_us;
-use avr_device::interrupt::Mutex;
+use avr_device::interrupt::{CriticalSection, Mutex};
 use embedded_hal::digital::OutputPin;
 
 pub struct Stepper<E, D, S> {
@@ -26,7 +26,7 @@ pub struct Stepper<E, D, S> {
     last_speed_update_us: Option<u64>,
 }
 
-trait StepperControl {
+pub trait StepperControl {
     fn set_enable(&mut self, enable: bool);
     fn set_speed(&mut self, speed: i32);
     fn set_acceleration(&mut self, acc: u32);
@@ -126,8 +126,8 @@ where
 
         let speed_update_delta_us = now - last_speed_update_us;
 
-        // only update speed (at most) every millisecond to avoid rounding errors
-        if speed_update_delta_us < 1000 {
+        
+        if speed_update_delta_us < 5000 {
             return;
         }
         self.last_speed_update_us = Some(now);
@@ -174,7 +174,7 @@ pub trait RefStepperControl {
     fn run(&self, now: u64);
 }
 
-pub struct StepperMutexControl<T>(Mutex<RefCell<Option<T>>>);
+pub struct StepperMutexControl<T>(pub Mutex<RefCell<Option<T>>>);
 
 // implement stepper control for global mutex of stepper
 impl<S> StepperMutexControl<S> {

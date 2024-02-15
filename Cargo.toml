@@ -11,26 +11,26 @@ test = false
 bench = false
 
 [dependencies]
-panic-serial = { version = "0.1.1", features = ["full"] }
+# panic-serial = { version = "0.1.1", features = ["full"] }
 ufmt = "0.2.0"
+# rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 nb = "1.1.0"
 mpu6050 = "0.1.6"
 ufmt_float = { git = "https://github.com/tl8roy/ufmt_float", rev = "d99c9b183792c4a2736387394f54f693ce17de76" }
 embedded-hal = "1.0"
-embedded-hal-async = "1.0"
 avr-device = "0.5.4"
-arrayvec = { version = "0.7.4", default-features = false }
-rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 panic-halt = "0.2.0"
-
-
+fast-math = "0.1.1"
+bitfield-struct = "0.5.6"
+thiserror-no-std = "2.0.2"
+# thiserror-core = "1.0.0"
 # [dependencies.embedded-hal-v0]
 # version = "0.2.3"
 # package = "embedded-hal"
 
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"
-rev = "eb818ae4bb256a2a632a81eb4f3fb0aa89d6a06e"
+rev = "b2be3f950c5a6493baa5a39fb6022c5b37acb1f5"
 features = ["arduino-nano"]
 
 # Configure the build for minimal size - AVRs have very little program memory
@@ -41,7 +41,7 @@ opt-level = "s"
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
-debug = true
+# codegen-units = 1
+# debug = true
 lto = true
 opt-level = "s"
