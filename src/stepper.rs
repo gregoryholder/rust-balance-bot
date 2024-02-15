@@ -16,21 +16,19 @@ pub struct Stepper<E, D, S> {
     /// in ticks/second/second
     target_acceleration: u32,
 
-    /// in microticks/second
-    target_speed: i64,
+    /// in milliticks/second
+    target_speed: i32,
 
-    /// in microticks/second
-    current_speed: i64,
-
-    
+    /// in milliticks/second
+    current_speed: i32,
 
     enabled: bool,
 
-    /// measured in microsteps (10^-6 steps) to allow for fractional steps (and unit consistency)
-    current_microstep: i64,
+    /// measured in millisteps (10^-3 steps)
+    current_millistep: i32,
 
-    /// measured in microsteps (10^-6 steps) to allow for fractional steps (and unit consistency)
-    target_microstep: i64,
+    /// measured in millisteps (10^-3 steps)
+    target_millistep: i32,
 
     last_step_time_us: Option<u64>,
     last_speed_update_us: Option<u64>,
@@ -73,7 +71,7 @@ where
 
     fn set_speed(&mut self, speed: i32) {
         let speed = speed.max(-self.max_speed).min(self.max_speed);
-        self.target_speed = speed as i64 * 1_000_000;
+        self.target_speed = speed * 1_000;
     }
 
     fn run(&mut self, now: u64) {
@@ -86,34 +84,34 @@ where
             return;
         };
 
-        let delta_us = now - last_step_time_us;
+        let delta_us = (now - last_step_time_us) as u32;
         self.last_step_time_us = Some(now);
 
         let current_speed = self.update_speed(now);
 
-        let target_microstep_delta = current_speed * delta_us as i64 / 1_000_000;
+        let target_millistep_delta = current_speed * delta_us as i32 / 1_000_000;
 
-        // limit the target microstep delta to (slightly less than) a single step
+        // limit the target millistep delta to (slightly less than) a single step
         // this function can at most only move one full step, so anything more than that
         // is a sign that the target speed is too high
-        let target_microstep_delta = target_microstep_delta.max(-0_950_000).min(0_950_000);
+        let target_millistep_delta = target_millistep_delta.max(-999).min(999);
 
-        let next_target_microstep = self.target_microstep + target_microstep_delta;
+        let next_target_millistep = self.target_millistep + target_millistep_delta;
 
-        self.target_microstep = next_target_microstep;
+        self.target_millistep = next_target_millistep;
 
-        let microstep_delta = next_target_microstep - self.current_microstep;
+        let millistep_delta = next_target_millistep - self.current_millistep;
 
-        if microstep_delta.abs() < 1_000_000 {
+        if millistep_delta.abs() < 1_000 {
             return;
         }
-        
-        let direction = if microstep_delta > 0 {
+
+        let direction = if millistep_delta > 0 {
             Direction::Forward
         } else {
             Direction::Backward
         };
-        
+
         self.step(direction);
 
         return;
@@ -149,8 +147,8 @@ where
 
             enabled: false,
 
-            current_microstep: 0,
-            target_microstep: 0,
+            current_millistep: 0,
+            target_millistep: 0,
 
             current_speed: 0,
             last_step_time_us: None,
@@ -158,7 +156,7 @@ where
         }
     }
 
-    /// performs a single step in the given direction and updates the current microstep
+    /// performs a single step in the given direction and updates the current millistep
     fn step(&mut self, direction: Direction) {
         self.set_direction(direction.into());
 
@@ -166,15 +164,15 @@ where
         delay_us(1);
         self.step_pin.set_low().unwrap();
 
-        // update current microstep based on the direction
-        self.current_microstep += match direction {
-            Direction::Forward => 1_000_000,
-            Direction::Backward => -1_000_000,
+        // update current millistep based on the direction
+        self.current_millistep += match direction {
+            Direction::Forward => 1_000,
+            Direction::Backward => -1_000,
         };
     }
 
     /// updates the current speed based on the target speed and acceleration and returns the new current speed
-    fn update_speed(&mut self, now: u64) -> i64 {
+    fn update_speed(&mut self, now: u64) -> i32 {
         let current_speed = self.current_speed;
 
         let Some(last_speed_update_us) = self.last_speed_update_us else {
@@ -182,7 +180,7 @@ where
             return current_speed;
         };
 
-        let speed_update_delta_us = now - last_speed_update_us;
+        let speed_update_delta_us = (now - last_speed_update_us) as u32;
 
         if speed_update_delta_us < 5000 {
             return current_speed;
@@ -198,14 +196,12 @@ where
         );
 
         self.current_speed = new_speed;
-        
 
         // print target speed and current speed
         // println!("target speed: {}, current speed: {}", self.target_speed, new_speed);
 
-        // print current microstep and target microstep
-        // println!("current microstep: {}, target microstep: {}", self.current_microstep, self.target_microstep);
-        
+        // print current millistep and target millistep
+        // println!("current millistep: {}, target millistep: {}", self.current_millistep, self.target_millistep);
 
         new_speed
     }
@@ -216,22 +212,22 @@ where
 }
 
 fn calculate_new_speed(
-    current_speed: i64,
-    target_speed: i64,
+    current_speed: i32,
+    target_speed: i32,
     target_acceleration: u32,
-    speed_update_delta_us: u64,
-) -> i64 {
-    let speed_delta = target_acceleration as u64 * speed_update_delta_us;
+    speed_update_delta_us: u32,
+) -> i32 {
+    let speed_delta = target_acceleration * speed_update_delta_us / 1_000;
 
     // how much the speed needs to change before matching the target (can be + or -)
     let speed_target_diff = target_speed - current_speed;
 
     // if the current speed is close enough to the target speed, apply the target speed directly
-    let new_speed = if (speed_target_diff.abs() as u64) < speed_delta {
+    let new_speed = if (speed_target_diff.abs() as u32) < speed_delta {
         target_speed
     } else {
         // update the speed (towards the target speed)
-        current_speed + speed_delta as i64 * speed_target_diff.signum()
+        current_speed + speed_delta as i32 * speed_target_diff.signum()
     };
 
     new_speed
