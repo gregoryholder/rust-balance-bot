@@ -41,7 +41,7 @@ fn main() -> ! {
     let pins = arduino_hal::pins!(dp);
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    // serial::init(serial);
+    serial::init(serial);
 
     let i2c = arduino_hal::I2c::new(
         dp.TWI,
@@ -117,6 +117,8 @@ fn main() -> ! {
 
         LEFT_STEPPER.set_speed( -pitch_int);
         RIGHT_STEPPER.set_speed(pitch_int);
+
+        // println!("pitch: {}", pitch_int);
 
         while millis() - now < GYRO_PERIOD {
             delay_ms(1);
