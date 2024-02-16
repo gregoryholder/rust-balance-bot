@@ -11,9 +11,7 @@ test = false
 bench = false
 
 [dependencies]
-# panic-serial = { version = "0.1.1", features = ["full"] }
 ufmt = "0.2.0"
-# rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 nb = "1.1.0"
 mpu6050 = "0.1.6"
 ufmt_float = { git = "https://github.com/tl8roy/ufmt_float", rev = "d99c9b183792c4a2736387394f54f693ce17de76" }
@@ -23,10 +21,8 @@ panic-halt = "0.2.0"
 fast-math = "0.1.1"
 bitfield-struct = "0.5.6"
 thiserror-no-std = "2.0.2"
-# thiserror-core = "1.0.0"
-# [dependencies.embedded-hal-v0]
-# version = "0.2.3"
-# package = "embedded-hal"
+arrayvec = { version = "0.7.4", default-features = false }
+
 
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"

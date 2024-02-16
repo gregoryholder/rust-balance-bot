@@ -3,10 +3,10 @@
 use core::cell::RefCell;
 
 use arduino_hal::delay_us;
-use avr_device::interrupt::{CriticalSection, Mutex};
+use avr_device::interrupt::Mutex;
 use embedded_hal::digital::OutputPin;
 
-use crate::println;
+
 
 pub struct Stepper<E, D, S> {
     enable_pin: E,
@@ -196,12 +196,6 @@ where
         );
 
         self.current_speed = new_speed;
-
-        // print target speed and current speed
-        // println!("target speed: {}, current speed: {}", self.target_speed, new_speed);
-
-        // print current millistep and target millistep
-        // println!("current millistep: {}, target millistep: {}", self.current_millistep, self.target_millistep);
 
         new_speed
     }

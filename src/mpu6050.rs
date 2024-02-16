@@ -45,7 +45,7 @@ where
         self.write_byte(GyroConfig::ADDR, GyroConfig::default())?;
 
         // set DLPF_CFG
-        self.write_byte(Config::ADDR, Config::new().with_dlpf_cfg(DlpfCfg::Mode4))?;
+        self.write_byte(Config::ADDR, Config::new().with_dlpf_cfg(DlpfCfg::Mode5))?;
 
         Ok(())
     }
