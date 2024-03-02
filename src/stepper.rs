@@ -2,11 +2,12 @@
 
 use core::cell::RefCell;
 
-use arduino_hal::delay_us;
+use arduino_hal::{
+    delay_us,
+    port::{mode::Output, Pin},
+};
 use avr_device::interrupt::Mutex;
 use embedded_hal::digital::OutputPin;
-
-
 
 pub struct Stepper<E, D, S> {
     enable_pin: E,
@@ -20,7 +21,7 @@ pub struct Stepper<E, D, S> {
     target_speed: i32,
 
     /// in milliticks/second
-    current_speed: i32,
+    pub current_speed: i32,
 
     enabled: bool,
 
@@ -29,6 +30,8 @@ pub struct Stepper<E, D, S> {
 
     /// measured in millisteps (10^-3 steps)
     target_millistep: i32,
+
+    pub delta_step: i32,
 
     last_step_time_us: Option<u64>,
     last_speed_update_us: Option<u64>,
@@ -56,7 +59,14 @@ pub trait StepperControl {
     fn set_enable(&mut self, enable: bool);
     fn set_speed(&mut self, speed: i32);
     fn set_acceleration(&mut self, acc: u32);
-    fn run(&mut self, now: u64);
+
+    fn update(&mut self, delta_ms: u32);
+
+    /// perform a single step if necessary
+    fn do_step(&mut self);
+
+    // fn run(&mut self, now: u64);
+    fn get_step_count(&self) -> i32;
 }
 
 impl<E, D, S> StepperControl for Stepper<E, D, S>
@@ -71,50 +81,46 @@ where
 
     fn set_speed(&mut self, speed: i32) {
         let speed = speed.max(-self.max_speed).min(self.max_speed);
-        self.target_speed = speed * 1_000;
+        self.target_speed = speed;
     }
 
-    fn run(&mut self, now: u64) {
+    fn update(&mut self, delta_ms: u32) {
         if !self.enabled {
             return;
         }
 
-        let Some(last_step_time_us) = self.last_step_time_us else {
-            self.last_step_time_us = Some(now);
-            return;
-        };
+        // calculate the new speed based on the target speed, acceleration, and the time since the last update
+        let current_speed = self.update_speed(delta_ms);
 
-        let delta_us = (now - last_step_time_us) as u32;
-        self.last_step_time_us = Some(now);
+        // how many millisteps the motor should move in the current time period
+        self.target_millistep += current_speed * delta_ms as i32 / 1_000;
 
-        let current_speed = self.update_speed(now);
+        let delta_step = (self.target_millistep - self.current_millistep) / 1000;
 
-        let target_millistep_delta = current_speed * delta_us as i32 / 1_000_000;
+        self.delta_step += delta_step;
+        self.current_millistep += delta_step * 1000;
+    }
 
-        // limit the target millistep delta to (slightly less than) a single step
-        // this function can at most only move one full step, so anything more than that
-        // is a sign that the target speed is too high
-        let target_millistep_delta = target_millistep_delta.max(-999).min(999);
-
-        let next_target_millistep = self.target_millistep + target_millistep_delta;
-
-        self.target_millistep = next_target_millistep;
-
-        let millistep_delta = next_target_millistep - self.current_millistep;
-
-        if millistep_delta.abs() < 1_000 {
+    #[inline(always)]
+    fn do_step(&mut self) {
+        if self.delta_step == 0 {
             return;
         }
 
-        let direction = if millistep_delta > 0 {
-            Direction::Forward
+        if self.delta_step > 0 {
+            self.direction_pin.set_high().unwrap();
+            self.step_pin.set_high().unwrap();
+            delay_us(1);
+            self.step_pin.set_low().unwrap();
+
+            self.delta_step -= 1;
         } else {
-            Direction::Backward
-        };
-
-        self.step(direction);
-
-        return;
+            self.direction_pin.set_low().unwrap();
+            self.step_pin.set_high().unwrap();
+            delay_us(1);
+            self.step_pin.set_low().unwrap();
+            self.delta_step += 1;
+        }
     }
 
     fn set_enable(&mut self, enable: bool) {
@@ -126,6 +132,10 @@ where
             self.last_step_time_us = None;
             self.last_speed_update_us = None;
         }
+    }
+
+    fn get_step_count(&self) -> i32 {
+        self.current_millistep / 1000
     }
 }
 
@@ -143,12 +153,13 @@ where
             target_acceleration: 0,
             target_speed: 0,
 
-            max_speed: 2000,
+            max_speed: 2000 * 1000,
 
             enabled: false,
 
             current_millistep: 0,
             target_millistep: 0,
+            delta_step: 0,
 
             current_speed: 0,
             last_step_time_us: None,
@@ -156,52 +167,20 @@ where
         }
     }
 
-    /// performs a single step in the given direction and updates the current millistep
-    fn step(&mut self, direction: Direction) {
-        self.set_direction(direction.into());
-
-        self.step_pin.set_high().unwrap();
-        delay_us(1);
-        self.step_pin.set_low().unwrap();
-
-        // update current millistep based on the direction
-        self.current_millistep += match direction {
-            Direction::Forward => 1_000,
-            Direction::Backward => -1_000,
-        };
-    }
-
     /// updates the current speed based on the target speed and acceleration and returns the new current speed
-    fn update_speed(&mut self, now: u64) -> i32 {
+    fn update_speed(&mut self, delta_ms: u32) -> i32 {
         let current_speed = self.current_speed;
-
-        let Some(last_speed_update_us) = self.last_speed_update_us else {
-            self.last_speed_update_us = Some(now);
-            return current_speed;
-        };
-
-        let speed_update_delta_us = (now - last_speed_update_us) as u32;
-
-        if speed_update_delta_us < 5000 {
-            return current_speed;
-        }
-
-        self.last_speed_update_us = Some(now);
 
         let new_speed = calculate_new_speed(
             current_speed,
             self.target_speed,
             self.target_acceleration,
-            speed_update_delta_us,
+            delta_ms,
         );
 
         self.current_speed = new_speed;
 
         new_speed
-    }
-
-    fn set_direction(&mut self, direction: bool) {
-        self.direction_pin.set_state(direction.into()).unwrap();
     }
 }
 
@@ -209,9 +188,9 @@ fn calculate_new_speed(
     current_speed: i32,
     target_speed: i32,
     target_acceleration: u32,
-    speed_update_delta_us: u32,
+    delta_ms: u32,
 ) -> i32 {
-    let speed_delta = target_acceleration * speed_update_delta_us / 1_000;
+    let speed_delta = target_acceleration * delta_ms;
 
     // how much the speed needs to change before matching the target (can be + or -)
     let speed_target_diff = target_speed - current_speed;
@@ -231,7 +210,7 @@ pub trait RefStepperControl {
     fn set_enable(&self, enable: bool);
     fn set_speed(&self, speed: i32);
     fn set_acceleration(&self, acc: u32);
-    fn run(&self, now: u64);
+    fn get_step_count(&self) -> i32;
 }
 
 pub struct StepperMutexControl<T>(pub Mutex<RefCell<Option<T>>>);
@@ -277,11 +256,13 @@ where
         });
     }
 
-    fn run(&self, now: u64) {
+    fn get_step_count(&self) -> i32 {
         avr_device::interrupt::free(|cs| {
             if let Some(stepper) = self.0.borrow(cs).borrow_mut().as_mut() {
-                stepper.run(now);
+                stepper.get_step_count()
+            } else {
+                0
             }
-        });
+        })
     }
 }

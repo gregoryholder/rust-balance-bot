@@ -249,6 +249,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
 
 [[package]]
+name = "panic-serial"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3afc60d58b0825ea32dd8d8a2796098f7b87ad3b9392cace3b6dc79e450afd9"
+dependencies = [
+ "ufmt",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -285,6 +294,7 @@ dependencies = [
  "mpu6050",
  "nb 1.1.0",
  "panic-halt",
+ "panic-serial",
  "thiserror-no-std",
  "ufmt",
  "ufmt_float",

@@ -1,8 +1,53 @@
 use bitfield_struct::bitfield;
 use embedded_hal::{delay::DelayNs, i2c::I2c};
-use thiserror_no_std::Error;
 
 use mpu6050 as _;
+
+/// MPU6050 Data Frame from register 0x3B to 0x48
+pub struct Mpu6050DataFrame {
+    pub accel_x: i16,
+    pub accel_y: i16,
+    pub accel_z: i16,
+    pub temp: i16,
+    pub gyro_x: i16,
+    pub gyro_y: i16,
+    pub gyro_z: i16,
+}
+
+// implement from be_bytes for Mpu6050DataFrame
+impl From<[u8; 14]> for Mpu6050DataFrame {
+    fn from(buf: [u8; 14]) -> Self {
+        Mpu6050DataFrame {
+            accel_x: i16::from_be_bytes([buf[0], buf[1]]),
+            accel_y: i16::from_be_bytes([buf[2], buf[3]]),
+            accel_z: i16::from_be_bytes([buf[4], buf[5]]),
+            temp: i16::from_be_bytes([buf[6], buf[7]]),
+            gyro_x: i16::from_be_bytes([buf[8], buf[9]]),
+            gyro_y: i16::from_be_bytes([buf[10], buf[11]]),
+            gyro_z: i16::from_be_bytes([buf[12], buf[13]]),
+        }
+    }
+}
+
+// impl Mpu6050DataFrame {
+//     /// pitch in degress, scaled by 1000
+//     pub fn calculate_pitch(&self) -> i32 {
+//         let acc_x = self.accel_x as f32;
+//         let acc_z = self.accel_z as f32;
+
+//         (-fast_math::atan2(acc_x, acc_z) * 180.0 * 1000.0 / 3.14159) as i32
+//     }
+// }
+
+pub trait ImuRead {
+    type Error;
+    // add fetching functions from below
+    fn get_data_frame(&mut self) -> Result<Mpu6050DataFrame, Self::Error>;
+    fn get_accel_raw(&mut self) -> Result<(i16, i16, i16), Self::Error>;
+    fn get_accel(&mut self) -> Result<(f32, f32, f32), Self::Error>;
+    fn get_gyro_raw(&mut self) -> Result<(i16, i16, i16), Self::Error>;
+    fn get_gyro(&mut self) -> Result<(f32, f32, f32), Self::Error>;
+}
 
 pub struct Mpu6050<I> {
     i2c: I,
@@ -45,29 +90,27 @@ where
         self.write_byte(GyroConfig::ADDR, GyroConfig::default())?;
 
         // set DLPF_CFG
-        self.write_byte(Config::ADDR, Config::new().with_dlpf_cfg(DlpfCfg::Mode5))?;
+        self.set_dlpf_cfg(DlpfCfg::Mode0)?;
+
+        // enable motion interrupt
+        self.write_byte(IntEnable::ADDR, IntEnable::new().with_data_rdy_en(true))?;
+
+        // set motion threshold
+        self.write_byte(MotThr::ADDR, MotThr::new().with_mot_thr(0))?;
+
+        self.write_byte(
+            IntPinCfg::ADDR,
+            IntPinCfg::new()
+                .with_int_level(true)
+                .with_latch_int_en(true), // .with_int_open(true)
+                                          // .with_int_rd_clear(true),
+        )?;
 
         Ok(())
     }
 
-    pub fn get_accel(&mut self) -> Result<(f32, f32, f32), Mpu6050Error<E>> {
-        let mut buf = [0; 6];
-        self.read_bytes(0x3B, &mut buf)?;
-        Ok((
-            i16::from_be_bytes([buf[0], buf[1]]) as f32 / self.acc_sensitivity,
-            i16::from_be_bytes([buf[2], buf[3]]) as f32 / self.acc_sensitivity,
-            i16::from_be_bytes([buf[4], buf[5]]) as f32 / self.acc_sensitivity,
-        ))
-    }
-
-    pub fn get_gyro(&mut self) -> Result<(f32, f32, f32), Mpu6050Error<E>> {
-        let mut buf = [0; 6];
-        self.read_bytes(0x43, &mut buf)?;
-        Ok((
-            i16::from_be_bytes([buf[0], buf[1]]) as f32 / self.gyro_sensitivity,
-            i16::from_be_bytes([buf[2], buf[3]]) as f32 / self.gyro_sensitivity,
-            i16::from_be_bytes([buf[4], buf[5]]) as f32 / self.gyro_sensitivity,
-        ))
+    pub fn set_dlpf_cfg(&mut self, mode: DlpfCfg) -> Result<(), Mpu6050Error<E>> {
+        self.write_byte(Config::ADDR, Config::new().with_dlpf_cfg(mode))
     }
 
     fn read_bytes(&mut self, reg: u8, buf: &mut [u8]) -> Result<(), Mpu6050Error<E>> {
@@ -86,7 +129,62 @@ where
     }
 }
 
-#[derive(Error, Debug)]
+impl<I, E> ImuRead for Mpu6050<I>
+where
+    I: I2c<Error = E>,
+{
+    type Error = Mpu6050Error<E>;
+    /// fetch accel, temp and gyro in a single transaction
+    fn get_data_frame(&mut self) -> Result<Mpu6050DataFrame, Self::Error> {
+        let mut buf = [0; 14];
+        self.read_bytes(0x3B, &mut buf)?;
+
+        Ok(Mpu6050DataFrame::from(buf))
+    }
+
+    /// not scaled by sensitivity (default 16384)
+    fn get_accel_raw(&mut self) -> Result<(i16, i16, i16), Self::Error> {
+        let mut buf = [0; 6];
+        self.read_bytes(0x3B, &mut buf)?;
+        Ok((
+            i16::from_be_bytes([buf[0], buf[1]]),
+            i16::from_be_bytes([buf[2], buf[3]]),
+            i16::from_be_bytes([buf[4], buf[5]]),
+        ))
+    }
+
+    /// in g
+    fn get_accel(&mut self) -> Result<(f32, f32, f32), Self::Error> {
+        let (x, y, z) = self.get_accel_raw()?;
+        Ok((
+            x as f32 / self.acc_sensitivity,
+            y as f32 / self.acc_sensitivity,
+            z as f32 / self.acc_sensitivity,
+        ))
+    }
+
+    /// not scaled by sensitivity (default 131)
+    fn get_gyro_raw(&mut self) -> Result<(i16, i16, i16), Self::Error> {
+        let mut buf = [0; 6];
+        self.read_bytes(0x43, &mut buf)?;
+        Ok((
+            i16::from_be_bytes([buf[0], buf[1]]),
+            i16::from_be_bytes([buf[2], buf[3]]),
+            i16::from_be_bytes([buf[4], buf[5]]),
+        ))
+    }
+
+    fn get_gyro(&mut self) -> Result<(f32, f32, f32), Self::Error> {
+        let (x, y, z) = self.get_gyro_raw()?;
+        Ok((
+            x as f32 / self.gyro_sensitivity,
+            y as f32 / self.gyro_sensitivity,
+            z as f32 / self.gyro_sensitivity,
+        ))
+    }
+}
+
+#[derive(thiserror_no_std::Error, Debug)]
 pub enum Mpu6050Error<E> {
     #[error("I2C error: {0}")]
     I2cError(#[from] E),
@@ -315,4 +413,48 @@ impl ExtSyncSet {
             _ => unimplemented!(),
         }
     }
+}
+
+#[bitfield(u8)]
+pub struct IntEnable {
+    pub data_rdy_en: bool,
+    pub __: bool,
+    pub __: bool,
+    pub i2c_mst_int_en: bool,
+    pub fifo_oflow_en: bool,
+    pub __: bool,
+    pub mot_en: bool,
+    pub __: bool,
+}
+
+impl IntEnable {
+    pub const ADDR: u8 = 0x38;
+}
+
+#[bitfield(u8)]
+pub struct IntPinCfg {
+    __: bool,
+    i2c_bypass_en: bool,
+    fsync_int_en: bool,
+    fsync_int_level: bool,
+    int_rd_clear: bool,
+    latch_int_en: bool,
+    int_open: bool,
+    int_level: bool,
+}
+
+impl IntPinCfg {
+    pub const ADDR: u8 = 0x37;
+}
+
+// MOT_THR
+#[bitfield(u8)]
+pub struct MotThr {
+    #[bits(7)]
+    pub mot_thr: u8,
+    __: bool,
+}
+
+impl MotThr {
+    pub const ADDR: u8 = 0x1F;
 }

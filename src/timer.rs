@@ -24,14 +24,13 @@ use avr_device::interrupt::{CriticalSection, Mutex};
 // ║      1024 ║          125 ║              8 ms ║
 // ║      1024 ║          250 ║             16 ms ║
 // ╚═══════════╩══════════════╩═══════════════════╝
-const PRESCALER: u32 = 64;
+const PRESCALER: u32 = 256;
 const TIMER_COUNTS: u32 = 250;
 
 const MILLIS_INCREMENT: u32 = PRESCALER * TIMER_COUNTS / 16000;
 
 static MILLIS_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
-#[allow(dead_code)]
 pub fn millis_init(tc0: arduino_hal::pac::TC0) {
     // Configure the timer for the above interval (in CTC mode)
     // and enable its interrupt.
